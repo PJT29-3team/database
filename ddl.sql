@@ -4,7 +4,7 @@
 --        financial preferences/products, and generated PDF report history.
 --
 -- Fresh-install DDL:
---   This file drops and recreates the 16 approved tables.
+--   This file drops and recreates the 17 approved tables.
 -- Security:
 --   Raw refresh/action tokens must never be stored. Only SHA-256 hashes are stored.
 -- Calculation policy:
@@ -31,6 +31,7 @@ DROP TABLE IF EXISTS account_deletion_requests;
 DROP TABLE IF EXISTS social_accounts;
 DROP TABLE IF EXISTS account_action_tokens;
 DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS password_histories;
 DROP TABLE IF EXISTS users;
 
 -- Shared application codes. Business tables deliberately have no physical
@@ -39,11 +40,17 @@ CREATE TABLE common_codes (
     common_code_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
-    code_group VARCHAR(60) NOT NULL,
-    code VARCHAR(60) NOT NULL,
-    code_name VARCHAR(100) NOT NULL,
+    code_group VARCHAR(60) NOT NULL COMMENT '대분류 코드',
+    code_group_name VARCHAR(100) NOT NULL DEFAULT '' COMMENT '대분류명',
+    middle_code VARCHAR(60) NOT NULL DEFAULT '' COMMENT '중분류 코드; 없으면 빈 문자열',
+    middle_code_name VARCHAR(100) NULL COMMENT '중분류명',
+    code VARCHAR(60) NOT NULL COMMENT '소분류 코드',
+    code_name VARCHAR(100) NOT NULL COMMENT '소분류명 또는 화면 표시문구',
     description VARCHAR(500) NULL,
     display_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    effective_start_ymd VARCHAR(8) NOT NULL DEFAULT '19000101'
+        COMMENT '적용 시작일자 yyyyMMdd',
+    effective_end_ymd VARCHAR(8) NULL COMMENT '적용 종료일자 yyyyMMdd; NULL은 종료일 없음',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -53,8 +60,20 @@ CREATE TABLE common_codes (
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
     PRIMARY KEY (common_code_id),
     UNIQUE KEY uq_common_codes_row_uuid (row_uuid),
-    UNIQUE KEY uq_common_codes_group_code (code_group, code),
-    INDEX idx_common_codes_group_active (code_group, is_active, display_order)
+    UNIQUE KEY uq_common_codes_effective (
+        code_group,
+        middle_code,
+        code,
+        effective_start_ymd
+    ),
+    INDEX idx_common_codes_group_active (
+        code_group,
+        middle_code,
+        is_active,
+        effective_start_ymd,
+        effective_end_ymd,
+        display_order
+    )
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
@@ -88,7 +107,32 @@ CREATE TABLE users (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '회원 기본정보와 계정 상태';
 
--- 2. JWT refresh token sessions. token_hash is SHA-256 hexadecimal text.
+-- 2. Security-only password history. Keep the latest five rows per user.
+-- This is not an analytics history: purge all rows when account deletion completes.
+CREATE TABLE password_histories (
+    password_history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    user_id BIGINT UNSIGNED NOT NULL COMMENT '논리 참조: users.user_id',
+    password_hash VARCHAR(255) NOT NULL COMMENT 'BCrypt 비밀번호 해시',
+    change_source_code VARCHAR(30) NOT NULL
+        COMMENT 'PASSWORD_CHANGE_SOURCE 코드',
+    changed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (password_history_id),
+    UNIQUE KEY uq_password_histories_row_uuid (row_uuid),
+    INDEX idx_password_histories_user_recent (user_id, changed_at DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '현재 비밀번호를 포함한 최근 5개 해시의 재사용 방지 이력';
+
+-- 3. JWT refresh token sessions. token_hash is SHA-256 hexadecimal text.
 CREATE TABLE refresh_tokens (
     refresh_token_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -114,7 +158,7 @@ CREATE TABLE refresh_tokens (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = 'JWT Refresh Token 해시와 회전·로그아웃 상태';
 
--- 3. One-time email verification/change/password reset tokens.
+-- 4. One-time email verification/change/password reset tokens.
 CREATE TABLE account_action_tokens (
     action_token_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -148,7 +192,7 @@ CREATE TABLE account_action_tokens (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '회원가입 이메일 인증·이메일 변경·비밀번호 재설정 일회용 토큰';
 
--- 4. Social provider identity linked to one user.
+-- 5. Social provider identity linked to one user.
 CREATE TABLE social_accounts (
     social_account_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -173,7 +217,7 @@ CREATE TABLE social_accounts (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '카카오·네이버 소셜 계정 연결정보';
 
--- 5. Withdrawal request with 30-day grace period and cancellation state.
+-- 6. Withdrawal request with 30-day grace period and cancellation state.
 CREATE TABLE account_deletion_requests (
     deletion_request_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -212,7 +256,7 @@ CREATE TABLE account_deletion_requests (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '30일 유예 회원탈퇴 신청·취소·완료 기록';
 
--- 6. Static survey cards and top-level safety/convenience/asset weights.
+-- 7. Static survey cards and top-level safety/convenience/asset weights.
 CREATE TABLE housing_preference_profiles (
     profile_code VARCHAR(40) NOT NULL,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -240,7 +284,7 @@ CREATE TABLE housing_preference_profiles (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '설문 성향 카드와 안전·편의·자산 가중치';
 
--- 7. One editable current home per user.
+-- 8. One editable current home per user.
 CREATE TABLE user_homes (
     user_home_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -275,7 +319,7 @@ CREATE TABLE user_homes (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '사용자가 수정할 수 있는 현재집 원본정보';
 
--- 8. Append-only audit history shared by the main service domains.
+-- 9. Append-only audit history shared by the main service domains.
 -- Grant the application account SELECT and INSERT only on this table.
 CREATE TABLE service_change_histories (
     change_history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -324,7 +368,7 @@ CREATE TABLE service_change_histories (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '주요 서비스 변경 사건을 보관하는 추가 전용 비식별 감사 이력';
 
--- 9. Immutable-ish home analysis output used by completed surveys and reports.
+-- 10. Immutable-ish home analysis output used by completed surveys and reports.
 CREATE TABLE home_analysis_snapshots (
     snapshot_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -386,7 +430,7 @@ CREATE TABLE home_analysis_snapshots (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '외부 시세와 백엔드 계산 결과를 보존하는 현재집 분석 스냅샷';
 
--- 10. Survey execution. Multiple completed surveys are retained; one can be active.
+-- 11. Survey execution. Multiple completed surveys are retained; one can be active.
 CREATE TABLE housing_surveys (
     survey_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -424,7 +468,7 @@ CREATE TABLE housing_surveys (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '로그인 후 주택 설문 실행과 완료 조건';
 
--- 11. Multiple desired regions selected without ordering.
+-- 12. Multiple desired regions selected without ordering.
 CREATE TABLE survey_desired_regions (
     desired_region_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -453,7 +497,7 @@ CREATE TABLE survey_desired_regions (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '설문별 순서 없는 복수 희망지역';
 
--- 12. Only user-favorited properties are persisted; recommendation results are not.
+-- 13. Only user-favorited properties are persisted; recommendation results are not.
 CREATE TABLE favorite_properties (
     favorite_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -491,7 +535,7 @@ CREATE TABLE favorite_properties (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '사용자가 직접 관심 등록한 주택과 최신 재평가 스냅샷';
 
--- 13. One current financial recommendation condition set per user.
+-- 14. One current financial recommendation condition set per user.
 CREATE TABLE financial_investment_profiles (
     investment_profile_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -518,7 +562,7 @@ CREATE TABLE financial_investment_profiles (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '관심주택을 기준으로 한 사용자의 최신 금융상품 추천 조건';
 
--- 14. Only products explicitly favorited by the user are persisted.
+-- 15. Only products explicitly favorited by the user are persisted.
 CREATE TABLE favorite_financial_products (
     favorite_financial_product_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -551,7 +595,7 @@ CREATE TABLE favorite_financial_products (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '사용자가 관심 등록한 금융상품의 표시 스냅샷';
 
--- 15. MyPage report history. PDF bytes live in private object/file storage.
+-- 16. MyPage report history. PDF bytes live in private object/file storage.
 CREATE TABLE generated_reports (
     report_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
@@ -606,6 +650,9 @@ INSERT INTO common_codes (
     ('ACTION_TOKEN_PURPOSE', 'SIGNUP', '회원가입 인증', '회원가입 이메일 인증 토큰', 10, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'EMAIL_CHANGE', '이메일 변경', '이메일 주소 변경 인증 토큰', 20, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'PASSWORD_RESET', '비밀번호 재설정', '비밀번호 재설정 토큰', 30, TRUE),
+    ('PASSWORD_CHANGE_SOURCE', 'SIGNUP', '회원가입', '회원가입 시 최초 비밀번호 등록', 10, TRUE),
+    ('PASSWORD_CHANGE_SOURCE', 'PASSWORD_RESET', '비밀번호 찾기', '이메일 링크를 통한 비밀번호 재설정', 20, TRUE),
+    ('PASSWORD_CHANGE_SOURCE', 'MYPAGE', '마이페이지', '로그인 후 마이페이지에서 비밀번호 변경', 30, TRUE),
     ('SOCIAL_PROVIDER', 'KAKAO', '카카오', '카카오 소셜 로그인', 10, TRUE),
     ('SOCIAL_PROVIDER', 'NAVER', '네이버', '네이버 소셜 로그인', 20, TRUE),
     ('DELETION_REASON', 'NO_LONGER_NEEDED', '더 이상 서비스를 이용하지 않음', '회원탈퇴 선택 사유', 10, TRUE),
@@ -682,6 +729,34 @@ ON DUPLICATE KEY UPDATE
     display_order = VALUES(display_order),
     is_active = VALUES(is_active);
 
+-- Populate Korean 대분류명. 중분류가 필요한 신규 코드는 middle_code와
+-- middle_code_name을 함께 입력하고, 기존 단일 단계 코드는 빈 문자열을 쓴다.
+UPDATE common_codes
+SET code_group_name = CASE code_group
+    WHEN 'USER_STATUS' THEN '회원 상태'
+    WHEN 'ACTION_TOKEN_PURPOSE' THEN '계정 처리 토큰 용도'
+    WHEN 'PASSWORD_CHANGE_SOURCE' THEN '비밀번호 변경 경로'
+    WHEN 'SOCIAL_PROVIDER' THEN '소셜 로그인 제공자'
+    WHEN 'DELETION_REASON' THEN '회원탈퇴 사유'
+    WHEN 'HOME_ANALYSIS_STATUS' THEN '현재집 분석 상태'
+    WHEN 'SURVEY_STATUS' THEN '설문 상태'
+    WHEN 'SURVEY_STEP' THEN '설문 단계'
+    WHEN 'RESERVE_OPTION' THEN '유보금 선택'
+    WHEN 'PROPERTY_AVAILABILITY' THEN '매물 가용 상태'
+    WHEN 'SUITABILITY_GRADE' THEN '적합도 등급'
+    WHEN 'HISTORY_ENTITY_TYPE' THEN '이력 대상 유형'
+    WHEN 'HISTORY_EVENT_TYPE' THEN '이력 사건 유형'
+    WHEN 'RISK_TOLERANCE' THEN '투자 위험 성향'
+    WHEN 'INVESTMENT_PERIOD' THEN '투자 기간'
+    WHEN 'FINANCIAL_PRODUCT_CATEGORY' THEN '금융상품 유형'
+    WHEN 'FINANCIAL_PRODUCT_RISK_GRADE' THEN '금융상품 위험 등급'
+    WHEN 'FINANCIAL_PRODUCT_AVAILABILITY' THEN '금융상품 판매 상태'
+    WHEN 'REPORT_STAGE' THEN '보고서 단계'
+    WHEN 'REPORT_STATUS' THEN '보고서 상태'
+    ELSE code_group
+END
+WHERE code_group_name = '';
+
 -- Idempotent survey-profile seed data.
 INSERT INTO housing_preference_profiles (
     profile_code,
@@ -747,6 +822,25 @@ DELETE FROM account_action_tokens
 WHERE expires_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY)
    OR consumed_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY)
    OR revoked_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY);
+
+-- 비밀번호 변경 성공 직후 실행하는 최근 5개 보존 정리 예시.
+-- 실제 서비스에서는 WHERE user_id = ? 범위로 실행하는 것을 권장한다.
+DELETE ph
+FROM password_histories ph
+JOIN (
+    SELECT password_history_id
+    FROM (
+        SELECT
+            password_history_id,
+            ROW_NUMBER() OVER (
+                PARTITION BY user_id
+                ORDER BY changed_at DESC, password_history_id DESC
+            ) AS history_rank
+        FROM password_histories
+    ) ranked
+    WHERE history_rank > 5
+) obsolete
+    ON obsolete.password_history_id = ph.password_history_id;
 
 -- Report cleanup is a two-resource operation and must be completed by the backend:
 --   1. Lock/select expired rows and mark them DELETING.
