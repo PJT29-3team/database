@@ -1,10 +1,15 @@
 -- Jiphyeonjeon final integrated schema
 -- Target: MySQL 8.0+
 -- Scope: member management, housing survey/current home, favorite properties,
---        financial preferences/products, and generated PDF report history.
+--        financial preferences/products, financial product cache
+--        (catalog / rate options / price history / return summary),
+--        and generated PDF report history.
 --
 -- Fresh-install DDL:
---   This file drops and recreates the 17 approved tables.
+--   This file drops and recreates the base 17 approved tables plus 4 financial
+--   product cache tables (21 total). The 4 cache tables are NOT user data:
+--   they are batch-synced from finlife / data.go.kr APIs and are safe to
+--   truncate and rebuild at any time.
 -- Security:
 --   Raw refresh/action tokens must never be stored. Only SHA-256 hashes are stored.
 -- Calculation policy:
@@ -16,6 +21,10 @@
 SET NAMES utf8mb4;
 
 DROP TABLE IF EXISTS common_codes;
+DROP TABLE IF EXISTS financial_product_return_summaries;
+DROP TABLE IF EXISTS financial_product_price_histories;
+DROP TABLE IF EXISTS financial_product_rate_options;
+DROP TABLE IF EXISTS financial_products;
 DROP TABLE IF EXISTS generated_reports;
 DROP TABLE IF EXISTS favorite_financial_products;
 DROP TABLE IF EXISTS financial_investment_profiles;
@@ -88,6 +97,7 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NULL COMMENT 'Password hash; NULL for social-only accounts',
     name VARCHAR(100) NULL COMMENT 'User display name',
     birth_year SMALLINT UNSIGNED NULL COMMENT 'Birth year collected during signup/profile completion',
+    phone_number VARCHAR(20) NULL COMMENT 'Email signup phone number',
     email_verified_at DATETIME(6) NULL COMMENT 'One-time signup email verification timestamp',
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING_VERIFICATION'
         COMMENT 'Account lifecycle status',
@@ -632,6 +642,232 @@ CREATE TABLE generated_reports (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '고정 양식 PDF의 단계별 생성 스냅샷과 30일 보관 메타데이터';
 
+-- ===========================================================================
+-- Financial product cache (tables 17-20). NOT user data.
+-- Batch-synced from finlife/data.go.kr; safe to truncate and rebuild.
+-- NOTE: these cache tables intentionally use LOGICAL references (no physical
+--       foreign keys) so batch jobs can freely truncate and rebuild them
+--       without FK ordering/blocking. This differs from the user-data tables
+--       below, which use physical foreign keys on purpose.
+-- ===========================================================================
+
+-- 17. Financial product master cache.
+CREATE TABLE financial_products (
+    financial_product_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    source_code VARCHAR(40) NOT NULL COMMENT '데이터 출처 (FINLIFE/DATA_GO_KR 등)',
+    external_product_key VARCHAR(255) NOT NULL
+        COMMENT '출처 고유키 (finlife fin_prdt_cd, 채권/ETF isinCd·srtnCd 등)',
+    product_category_code VARCHAR(40) NOT NULL
+        COMMENT 'FINANCIAL_PRODUCT_CATEGORY 코드',
+    product_risk_grade VARCHAR(30) NOT NULL
+        COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
+    product_name VARCHAR(255) NOT NULL COMMENT '상품명',
+    institution_name VARCHAR(255) NOT NULL COMMENT '금융회사명',
+    join_way VARCHAR(500) NULL COMMENT '가입 방법 (예적금 join_way)',
+    special_condition TEXT NULL COMMENT '우대조건 원문 (예적금 spcl_cnd)',
+    availability_status VARCHAR(20) NOT NULL DEFAULT 'AVAILABLE'
+        COMMENT 'FINANCIAL_PRODUCT_AVAILABILITY 코드',
+    disclosure_month VARCHAR(6) NULL COMMENT '공시월 yyyyMM (finlife dcls_month)',
+    raw_payload_json JSON NULL COMMENT '원본 응답 스냅샷(선택)',
+    synced_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        COMMENT '마지막 배치 최신화 시각',
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (financial_product_id),
+    UNIQUE KEY uq_financial_products_row_uuid (row_uuid),
+    UNIQUE KEY uq_financial_products_source_key (source_code, external_product_key),
+    INDEX idx_financial_products_filter (
+        product_category_code,
+        product_risk_grade,
+        availability_status
+    ),
+    INDEX idx_financial_products_synced (synced_at)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '외부 API에서 배치로 적재하는 금융상품 마스터 캐시';
+
+-- 18. Deposit/savings term-by-term interest rate options (finlife optionList).
+CREATE TABLE financial_product_rate_options (
+    rate_option_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    financial_product_id BIGINT UNSIGNED NOT NULL
+        COMMENT '논리 참조: financial_products.financial_product_id',
+    save_term_months SMALLINT UNSIGNED NOT NULL COMMENT '저축기간(개월) save_trm',
+    interest_rate_type_code VARCHAR(30) NOT NULL DEFAULT ''
+        COMMENT '금리유형 단리/복리 (intr_rate_type); 없으면 빈 문자열',
+    reserve_type_code VARCHAR(30) NOT NULL DEFAULT ''
+        COMMENT '적립유형 정액/자유 (적금 rsrv_type); 예금은 빈 문자열',
+    base_rate DECIMAL(5, 2) NULL COMMENT '기본금리(%) intr_rate',
+    max_rate DECIMAL(5, 2) NULL COMMENT '최고우대금리(%) intr_rate2',
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (rate_option_id),
+    UNIQUE KEY uq_rate_options_row_uuid (row_uuid),
+    UNIQUE KEY uq_rate_options_product_term (
+        financial_product_id,
+        save_term_months,
+        reserve_type_code,
+        interest_rate_type_code
+    ),
+    INDEX idx_rate_options_product (financial_product_id)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '예적금 기간별 금리 옵션(baseList와 optionList 병합본)';
+
+-- 19. Daily/weekly price history for bonds and ETFs (data.go.kr 시세).
+CREATE TABLE financial_product_price_histories (
+    price_history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    financial_product_id BIGINT UNSIGNED NOT NULL
+        COMMENT '논리 참조: financial_products.financial_product_id',
+    base_date_ymd VARCHAR(8) NOT NULL COMMENT '기준일자 yyyyMMdd (basDt)',
+    close_price DECIMAL(18, 4) NULL COMMENT '종가 (ETF clpr / 채권 clprPrc)',
+    yield_rate DECIMAL(9, 4) NULL COMMENT '채권 유통수익률(%) (clprBnfRt)',
+    nav DECIMAL(18, 4) NULL COMMENT 'ETF 순자산가치(NAV)',
+    change_rate DECIMAL(9, 4) NULL COMMENT '등락률(%) (fltRt)',
+    trade_volume BIGINT UNSIGNED NULL COMMENT '거래량 (trqu)',
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (price_history_id),
+    UNIQUE KEY uq_price_histories_row_uuid (row_uuid),
+    UNIQUE KEY uq_price_histories_product_date (financial_product_id, base_date_ymd),
+    INDEX idx_price_histories_series (financial_product_id, base_date_ymd DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '채권·ETF 일/주별 시세 이력(수익률·MDD 계산 원천)';
+
+-- 20. Precomputed return summaries per period (batch-calculated from history).
+CREATE TABLE financial_product_return_summaries (
+    return_summary_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    financial_product_id BIGINT UNSIGNED NOT NULL
+        COMMENT '논리 참조: financial_products.financial_product_id',
+    period_code VARCHAR(20) NOT NULL COMMENT '기간 구분 (1M/3M/6M/1Y/3Y 등)',
+    base_date_ymd VARCHAR(8) NOT NULL COMMENT '계산 기준일자 yyyyMMdd',
+    cumulative_return DECIMAL(9, 4) NULL COMMENT '누적수익률(%)',
+    annualized_return DECIMAL(9, 4) NULL COMMENT '연환산수익률(%)',
+    max_drawdown DECIMAL(9, 4) NULL COMMENT '최대낙폭 MDD(%)',
+    calculated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        COMMENT '요약 계산 시각',
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (return_summary_id),
+    UNIQUE KEY uq_return_summaries_row_uuid (row_uuid),
+    UNIQUE KEY uq_return_summaries_product_period (financial_product_id, period_code),
+    INDEX idx_return_summaries_product (financial_product_id)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '배치로 미리 계산한 기간별 수익률 요약(연환산·MDD)';
+
+-- Physical integrity constraints for single-table logical references.
+-- Deletes are explicit because this schema uses logical deletion and audit history.
+ALTER TABLE password_histories
+    ADD CONSTRAINT fk_password_histories_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE refresh_tokens
+    ADD CONSTRAINT fk_refresh_tokens_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE account_action_tokens
+    ADD CONSTRAINT fk_account_action_tokens_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE social_accounts
+    ADD CONSTRAINT fk_social_accounts_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE account_deletion_requests
+    ADD CONSTRAINT fk_account_deletion_requests_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE user_homes
+    ADD CONSTRAINT fk_user_homes_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE service_change_histories
+    ADD CONSTRAINT fk_service_change_histories_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE home_analysis_snapshots
+    ADD CONSTRAINT fk_home_analysis_snapshots_user_home
+        FOREIGN KEY (user_home_id) REFERENCES user_homes (user_home_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE housing_surveys
+    ADD CONSTRAINT fk_housing_surveys_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    ADD CONSTRAINT fk_housing_surveys_profile
+        FOREIGN KEY (profile_code) REFERENCES housing_preference_profiles (profile_code)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    ADD CONSTRAINT fk_housing_surveys_home_snapshot
+        FOREIGN KEY (home_analysis_snapshot_id) REFERENCES home_analysis_snapshots (snapshot_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE survey_desired_regions
+    ADD CONSTRAINT fk_survey_desired_regions_survey
+        FOREIGN KEY (survey_id) REFERENCES housing_surveys (survey_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE favorite_properties
+    ADD CONSTRAINT fk_favorite_properties_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    ADD CONSTRAINT fk_favorite_properties_survey
+        FOREIGN KEY (evaluated_survey_id) REFERENCES housing_surveys (survey_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE financial_investment_profiles
+    ADD CONSTRAINT fk_financial_investment_profiles_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    ADD CONSTRAINT fk_financial_investment_profiles_favorite
+        FOREIGN KEY (selected_favorite_id) REFERENCES favorite_properties (favorite_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE favorite_financial_products
+    ADD CONSTRAINT fk_favorite_financial_products_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+ALTER TABLE generated_reports
+    ADD CONSTRAINT fk_generated_reports_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
 -- Idempotent application-code seed data.
 INSERT INTO common_codes (
     code_group,
@@ -648,6 +884,7 @@ INSERT INTO common_codes (
     ('USER_STATUS', 'DELETED', '탈퇴 완료', '개인정보 익명화가 완료된 계정', 50, TRUE),
     ('USER_STATUS', 'SUSPENDED', '이용 정지', '운영 정책에 따라 이용이 정지된 계정', 60, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'SIGNUP', '회원가입 인증', '회원가입 이메일 인증 토큰', 10, TRUE),
+    ('ACTION_TOKEN_PURPOSE', 'SIGNUP_COMPLETION', '회원가입 완료', '이메일 인증 후 회원가입 완료용 일회성 토큰', 15, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'EMAIL_CHANGE', '이메일 변경', '이메일 주소 변경 인증 토큰', 20, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'PASSWORD_RESET', '비밀번호 재설정', '비밀번호 재설정 토큰', 30, TRUE),
     ('PASSWORD_CHANGE_SOURCE', 'SIGNUP', '회원가입', '회원가입 시 최초 비밀번호 등록', 10, TRUE),
@@ -698,13 +935,14 @@ INSERT INTO common_codes (
     ('HISTORY_EVENT_TYPE', 'ANONYMIZED', '익명화', '회원 탈퇴 완료 후 개인정보 익명화', 100, TRUE),
     ('RISK_TOLERANCE', 'VERY_LOW', '매우 낮은 위험', '원금 보전 가능성을 가장 중요하게 보는 성향', 10, TRUE),
     ('RISK_TOLERANCE', 'LOW', '낮은 위험', '낮은 변동성과 안정성을 선호하는 성향', 20, TRUE),
-    ('RISK_TOLERANCE', 'HIGH', '높은 위험', '수익을 위해 가격 변동을 감수하는 성향', 30, TRUE),
+    ('RISK_TOLERANCE', 'MEDIUM', '보통 위험', '어느 정도의 가격 변동을 감수하는 보통 위험 성향', 30, TRUE),
     ('INVESTMENT_PERIOD', 'SHORT', '단기', '1년 이내 투자 기간', 10, TRUE),
     ('INVESTMENT_PERIOD', 'MEDIUM', '중기', '1년 초과 3년 이내 투자 기간', 20, TRUE),
     ('INVESTMENT_PERIOD', 'LONG', '장기', '3년 초과 투자 기간', 30, TRUE),
     ('FINANCIAL_PRODUCT_CATEGORY', 'DEPOSIT', '예금', '정기예금 등 예금 상품', 10, TRUE),
     ('FINANCIAL_PRODUCT_CATEGORY', 'SAVINGS', '적금', '정기적금 등 적립식 상품', 20, TRUE),
     ('FINANCIAL_PRODUCT_CATEGORY', 'CMA', 'CMA', '종합자산관리계좌 상품', 30, TRUE),
+    ('FINANCIAL_PRODUCT_CATEGORY', 'BOND', '채권', '국채·회사채 등 개별 채권 상품(채권시세정보 API)', 45, TRUE),
     ('FINANCIAL_PRODUCT_CATEGORY', 'BOND_FUND', '채권형 펀드', '채권 중심 집합투자 상품', 40, TRUE),
     ('FINANCIAL_PRODUCT_CATEGORY', 'BOND_ETF', '채권 ETF', '거래소에서 거래되는 채권형 상품', 50, TRUE),
     ('FINANCIAL_PRODUCT_RISK_GRADE', 'VERY_LOW', '매우 낮은 위험', '금융상품 위험등급', 10, TRUE),
