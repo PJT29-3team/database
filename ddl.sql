@@ -21,13 +21,13 @@
 SET NAMES utf8mb4;
 
 DROP TABLE IF EXISTS common_codes;
-DROP TABLE IF EXISTS financial_product_return_summaries;
+DROP TABLE IF EXISTS financial_product_favorites;
+DROP TABLE IF EXISTS financial_product_history;
 DROP TABLE IF EXISTS financial_product_price_histories;
-DROP TABLE IF EXISTS financial_product_rate_options;
-DROP TABLE IF EXISTS financial_products;
+DROP TABLE IF EXISTS financial_product_stock;
+DROP TABLE IF EXISTS financial_product_account;
+DROP TABLE IF EXISTS financial_product_preference;
 DROP TABLE IF EXISTS generated_reports;
-DROP TABLE IF EXISTS favorite_financial_products;
-DROP TABLE IF EXISTS financial_investment_profiles;
 DROP TABLE IF EXISTS favorite_properties;
 DROP TABLE IF EXISTS survey_desired_regions;
 DROP TABLE IF EXISTS housing_surveys;
@@ -546,64 +546,78 @@ CREATE TABLE favorite_properties (
   COMMENT = '사용자가 직접 관심 등록한 주택과 최신 재평가 스냅샷';
 
 -- 14. One current financial recommendation condition set per user.
-CREATE TABLE financial_investment_profiles (
-    investment_profile_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+CREATE TABLE financial_product_preference (
+    financial_product_preference_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
-    user_id BIGINT UNSIGNED NOT NULL,
-    selected_favorite_id BIGINT UNSIGNED NOT NULL
-        COMMENT 'Favorite property used as the downsizing fund basis',
-    investment_ratio_percent DECIMAL(5, 2) NOT NULL,
-    risk_tolerance VARCHAR(20) NOT NULL,
-    investment_period_code VARCHAR(20) NOT NULL
-        COMMENT 'INVESTMENT_PERIOD 코드',
+    invest_ratio DECIMAL(5, 2) NOT NULL COMMENT '투자 비율(%) 2~30',
+    safety_level VARCHAR(30) NOT NULL
+        COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드 (VERY_LOW=6/LOW=5/MEDIUM=4등급)',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
         ON UPDATE CURRENT_TIMESTAMP(6),
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (investment_profile_id),
-    UNIQUE KEY uq_financial_investment_profiles_row_uuid (row_uuid),
-    UNIQUE KEY uq_financial_profiles_user (user_id),
-    INDEX idx_financial_profiles_favorite (selected_favorite_id)
+    PRIMARY KEY (financial_product_preference_id),
+    UNIQUE KEY uq_financial_product_preference_row_uuid (row_uuid)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '관심주택을 기준으로 한 사용자의 최신 금융상품 추천 조건';
+  COMMENT = 'FPR-001 금융상품 추천 조건 (survey가 참조)';
 
--- 15. Only products explicitly favorited by the user are persisted.
-CREATE TABLE favorite_financial_products (
-    favorite_financial_product_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+-- 15. 관심 등록 금융상품 + 투자금액 배분 (금액 배분 기능).
+CREATE TABLE financial_product_favorites (
+    financial_product_favorites_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
-    user_id BIGINT UNSIGNED NOT NULL,
-    source_code VARCHAR(40) NOT NULL,
-    external_product_key VARCHAR(255) NOT NULL,
-    product_category_code VARCHAR(40) NOT NULL,
-    product_name VARCHAR(255) NOT NULL,
-    institution_name VARCHAR(255) NOT NULL,
-    product_risk_grade VARCHAR(30) NOT NULL,
-    availability_status VARCHAR(20) NOT NULL DEFAULT 'AVAILABLE',
-    product_snapshot_json JSON NOT NULL
-        COMMENT 'Provider data and display values captured when saved/refreshed',
-    saved_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    last_checked_at DATETIME(6) NULL,
+    survey_id BIGINT UNSIGNED NOT NULL
+        COMMENT '논리 참조: 설문(housing_surveys→향후 survey). survey 확정 후 물리 FK 추가',
+    financial_product_stock_id BIGINT UNSIGNED NULL
+        COMMENT 'ETF/채권/펀드 관심 시 채움 (account_id와 배타)',
+    financial_product_account_id BIGINT UNSIGNED NULL
+        COMMENT '예적금/CMA 관심 시 채움 (stock_id와 배타)',
+    allocation_amount DECIMAL(18, 0) NULL COMMENT '배분 금액(원)',
+    allocation_percent DECIMAL(5, 2) NULL COMMENT '배분 비율(%)',
+    is_selected CHAR(1) NOT NULL DEFAULT 'N' COMMENT '최종 선택 여부',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
         ON UPDATE CURRENT_TIMESTAMP(6),
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (favorite_financial_product_id),
-    UNIQUE KEY uq_favorite_financial_products_row_uuid (row_uuid),
-    UNIQUE KEY uq_financial_products_user_source_key (user_id, source_code, external_product_key),
-    INDEX idx_fin_favorites_user_saved (user_id, saved_at DESC),
-    INDEX idx_fin_favorites_product (source_code, external_product_key)
+    PRIMARY KEY (financial_product_favorites_id),
+    UNIQUE KEY uq_financial_product_favorites_row_uuid (row_uuid),
+    INDEX idx_fin_favorites_survey (survey_id),
+    INDEX idx_fin_favorites_stock (financial_product_stock_id),
+    INDEX idx_fin_favorites_account (financial_product_account_id),
+    CONSTRAINT chk_fin_favorites_one_product
+        CHECK ((financial_product_stock_id IS NULL) <> (financial_product_account_id IS NULL))
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '사용자가 관심 등록한 금융상품의 표시 스냅샷';
+  COMMENT = '관심 등록 금융상품 + 투자금액 배분';
+
+-- 15-1. 관심 금융상품 변경/선택 이력 (append 보관).
+CREATE TABLE financial_product_history (
+    financial_product_history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    survey_id BIGINT UNSIGNED NOT NULL COMMENT '논리 참조: 설문',
+    financial_product_stock_id BIGINT UNSIGNED NULL COMMENT '논리 참조(이력이라 FK 미설정)',
+    financial_product_account_id BIGINT UNSIGNED NULL COMMENT '논리 참조(이력이라 FK 미설정)',
+    allocation_amount DECIMAL(18, 0) NULL COMMENT '배분 금액(원)',
+    allocation_percent DECIMAL(5, 2) NULL COMMENT '배분 비율(%)',
+    is_selected CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (financial_product_history_id),
+    UNIQUE KEY uq_financial_product_history_row_uuid (row_uuid),
+    INDEX idx_fin_history_survey (survey_id, created_at DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '관심 금융상품 변경/선택 이력(append-only)';
 
 -- 16. MyPage report history. PDF bytes live in private object/file storage.
 CREATE TABLE generated_reports (
@@ -643,146 +657,108 @@ CREATE TABLE generated_reports (
   COMMENT = '고정 양식 PDF의 단계별 생성 스냅샷과 30일 보관 메타데이터';
 
 -- ===========================================================================
--- Financial product cache (tables 17-20). NOT user data.
--- Batch-synced from finlife/data.go.kr; safe to truncate and rebuild.
--- NOTE: these cache tables intentionally use LOGICAL references (no physical
---       foreign keys) so batch jobs can freely truncate and rebuild them
---       without FK ordering/blocking. This differs from the user-data tables
---       below, which use physical foreign keys on purpose.
+-- Financial product master (stock / account) + price history.
+-- 상품 마스터는 주별 배치로 product_type(고유코드) 기준 UPSERT → PK 안정적이라
+-- favorites/price_histories 물리 FK 안전. 가격 이력은 append-only 원장.
+-- survey_id는 다른 팀 담당(설문) 테이블이라 현재 논리 참조(물리 FK 미설정).
 -- ===========================================================================
 
--- 17. Financial product master cache.
-CREATE TABLE financial_products (
-    financial_product_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+-- 17. ETF/채권/펀드 상품 마스터.
+CREATE TABLE financial_product_stock (
+    financial_product_stock_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
-    source_code VARCHAR(40) NOT NULL COMMENT '데이터 출처 (FINLIFE/DATA_GO_KR 등)',
-    external_product_key VARCHAR(255) NOT NULL
-        COMMENT '출처 고유키 (finlife fin_prdt_cd, 채권/ETF isinCd·srtnCd 등)',
-    product_category_code VARCHAR(40) NOT NULL
-        COMMENT 'FINANCIAL_PRODUCT_CATEGORY 코드',
-    product_risk_grade VARCHAR(30) NOT NULL
-        COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
-    product_name VARCHAR(255) NOT NULL COMMENT '상품명',
+    product_type VARCHAR(40) NOT NULL COMMENT '종목코드(단축코드/ISIN) — 주별 UPSERT 고유키',
+    category_code VARCHAR(40) NOT NULL
+        COMMENT 'FINANCIAL_PRODUCT_CATEGORY 코드 (BOND/BOND_ETF/BOND_FUND 등)',
+    stock_name VARCHAR(255) NOT NULL COMMENT '상품명',
+    institution_name VARCHAR(255) NOT NULL COMMENT '운용사',
+    safety_level VARCHAR(30) NOT NULL COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
+    duration_months SMALLINT UNSIGNED NOT NULL
+        COMMENT '권장 투자기간(개월) — 이 값으로 단/중/장 구분',
+    invest_period VARCHAR(20) NOT NULL
+        COMMENT 'INVESTMENT_PERIOD 코드. duration_months 기준: <12=SHORT, 12~35=MEDIUM, >=36=LONG',
+    maturity_date DATE NULL
+        COMMENT '만기일(존속기한). 값이 있으면 만기 상품 → 추천은 maturity_date IS NOT NULL만',
+    underlying_index VARCHAR(100) NULL COMMENT '기초지수',
+    return_rate DECIMAL(9, 4) NULL COMMENT '3년(연환산) 수익률(%) — 주별 재계산',
+    max_drawdown DECIMAL(9, 4) NULL COMMENT '최대낙폭 MDD(%)',
+    volatility DECIMAL(9, 4) NULL COMMENT '변동성(%)',
+    loss_risk CHAR(1) NULL COMMENT '원금손실 가능 여부 Y/N',
+    past_return_date VARCHAR(8) NULL COMMENT '수익률 계산 기준일 yyyyMMdd',
+    past_return_rate DECIMAL(9, 4) NULL COMMENT '과거(기간) 수익률(%)',
+    recommend_reason TEXT NULL COMMENT '추천 이유',
+    recommended_weight DECIMAL(5, 2) NULL COMMENT '추천 비중(%)',
+    synced_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '주별 최신화 시각',
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (financial_product_stock_id),
+    UNIQUE KEY uq_financial_product_stock_row_uuid (row_uuid),
+    UNIQUE KEY uq_financial_product_stock_type (product_type),
+    INDEX idx_financial_product_stock_filter (invest_period, safety_level)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = 'ETF/채권/펀드 상품 마스터(주별 UPSERT)';
+
+-- 18. 예적금/CMA 상품 마스터.
+CREATE TABLE financial_product_account (
+    financial_product_account_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    product_type VARCHAR(40) NOT NULL COMMENT '상품코드(finlife fin_prdt_cd) — 주별 UPSERT 고유키',
+    category_code VARCHAR(40) NOT NULL
+        COMMENT 'FINANCIAL_PRODUCT_CATEGORY 코드 (DEPOSIT/SAVINGS/CMA)',
+    account_name VARCHAR(255) NOT NULL COMMENT '상품명',
     institution_name VARCHAR(255) NOT NULL COMMENT '금융회사명',
-    join_way VARCHAR(500) NULL COMMENT '가입 방법 (예적금 join_way)',
-    special_condition TEXT NULL COMMENT '우대조건 원문 (예적금 spcl_cnd)',
-    availability_status VARCHAR(20) NOT NULL DEFAULT 'AVAILABLE'
-        COMMENT 'FINANCIAL_PRODUCT_AVAILABILITY 코드',
-    disclosure_month VARCHAR(6) NULL COMMENT '공시월 yyyyMM (finlife dcls_month)',
-    raw_payload_json JSON NULL COMMENT '원본 응답 스냅샷(선택)',
-    synced_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        COMMENT '마지막 배치 최신화 시각',
+    safety_level VARCHAR(30) NOT NULL COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
+    invest_period VARCHAR(20) NOT NULL
+        COMMENT 'INVESTMENT_PERIOD 코드. subscription_period 기준: <12=SHORT, 12~35=MEDIUM, >=36=LONG',
+    interest_rate DECIMAL(5, 2) NULL COMMENT '기본금리(%)',
+    max_interest_rate DECIMAL(5, 2) NULL COMMENT '최고우대금리(%)',
+    subscription_period SMALLINT UNSIGNED NOT NULL
+        COMMENT '가입기간(개월) — 이 값으로 단/중/장 구분. 통장류(CMA)는 0(=단기)',
+    recommend_reason TEXT NULL COMMENT '추천 이유',
+    recommended_weight DECIMAL(5, 2) NULL COMMENT '추천 비중(%)',
+    synced_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '주별 최신화 시각',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
         ON UPDATE CURRENT_TIMESTAMP(6),
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (financial_product_id),
-    UNIQUE KEY uq_financial_products_row_uuid (row_uuid),
-    UNIQUE KEY uq_financial_products_source_key (source_code, external_product_key),
-    INDEX idx_financial_products_filter (
-        product_category_code,
-        product_risk_grade,
-        availability_status
-    ),
-    INDEX idx_financial_products_synced (synced_at)
+    PRIMARY KEY (financial_product_account_id),
+    UNIQUE KEY uq_financial_product_account_row_uuid (row_uuid),
+    UNIQUE KEY uq_financial_product_account_type (product_type),
+    INDEX idx_financial_product_account_filter (invest_period, safety_level)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '외부 API에서 배치로 적재하는 금융상품 마스터 캐시';
+  COMMENT = '예적금/CMA 상품 마스터(주별 UPSERT)';
 
--- 18. Deposit/savings term-by-term interest rate options (finlife optionList).
-CREATE TABLE financial_product_rate_options (
-    rate_option_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
-        NOT NULL DEFAULT (UUID()),
-    financial_product_id BIGINT UNSIGNED NOT NULL
-        COMMENT '논리 참조: financial_products.financial_product_id',
-    save_term_months SMALLINT UNSIGNED NOT NULL COMMENT '저축기간(개월) save_trm',
-    interest_rate_type_code VARCHAR(30) NOT NULL DEFAULT ''
-        COMMENT '금리유형 단리/복리 (intr_rate_type); 없으면 빈 문자열',
-    reserve_type_code VARCHAR(30) NOT NULL DEFAULT ''
-        COMMENT '적립유형 정액/자유 (적금 rsrv_type); 예금은 빈 문자열',
-    base_rate DECIMAL(5, 2) NULL COMMENT '기본금리(%) intr_rate',
-    max_rate DECIMAL(5, 2) NULL COMMENT '최고우대금리(%) intr_rate2',
-    del_yn CHAR(1) NOT NULL DEFAULT 'N',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (rate_option_id),
-    UNIQUE KEY uq_rate_options_row_uuid (row_uuid),
-    UNIQUE KEY uq_rate_options_product_term (
-        financial_product_id,
-        save_term_months,
-        reserve_type_code,
-        interest_rate_type_code
-    ),
-    INDEX idx_rate_options_product (financial_product_id)
-) ENGINE = InnoDB
-  DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '예적금 기간별 금리 옵션(baseList와 optionList 병합본)';
-
--- 19. Daily/weekly price history for bonds and ETFs (data.go.kr 시세).
+-- 19. 주별 종가 이력(append-only) — 3년 수익률·분석/알고리즘용. stock 전용.
+--     기간별 수익률 요약(구 return_summaries)은 stock 테이블 필드로 흡수, 필요시 이력에서 재계산.
 CREATE TABLE financial_product_price_histories (
     price_history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
-        NOT NULL DEFAULT (UUID()),
-    financial_product_id BIGINT UNSIGNED NOT NULL
-        COMMENT '논리 참조: financial_products.financial_product_id',
-    base_date_ymd VARCHAR(8) NOT NULL COMMENT '기준일자 yyyyMMdd (basDt)',
-    close_price DECIMAL(18, 4) NULL COMMENT '종가 (ETF clpr / 채권 clprPrc)',
-    yield_rate DECIMAL(9, 4) NULL COMMENT '채권 유통수익률(%) (clprBnfRt)',
+    financial_product_stock_id BIGINT UNSIGNED NOT NULL
+        COMMENT 'financial_product_stock 참조',
+    base_date_ymd VARCHAR(8) NOT NULL COMMENT '기준일자 yyyyMMdd',
+    close_price DECIMAL(18, 4) NULL COMMENT '종가',
+    yield_rate DECIMAL(9, 4) NULL COMMENT '채권 유통수익률(%)',
     nav DECIMAL(18, 4) NULL COMMENT 'ETF 순자산가치(NAV)',
-    change_rate DECIMAL(9, 4) NULL COMMENT '등락률(%) (fltRt)',
-    trade_volume BIGINT UNSIGNED NULL COMMENT '거래량 (trqu)',
-    del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
     PRIMARY KEY (price_history_id),
-    UNIQUE KEY uq_price_histories_row_uuid (row_uuid),
-    UNIQUE KEY uq_price_histories_product_date (financial_product_id, base_date_ymd),
-    INDEX idx_price_histories_series (financial_product_id, base_date_ymd DESC)
+    UNIQUE KEY uq_price_histories_stock_date (financial_product_stock_id, base_date_ymd),
+    INDEX idx_price_histories_series (financial_product_stock_id, base_date_ymd DESC)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '채권·ETF 일/주별 시세 이력(수익률·MDD 계산 원천)';
-
--- 20. Precomputed return summaries per period (batch-calculated from history).
-CREATE TABLE financial_product_return_summaries (
-    return_summary_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
-        NOT NULL DEFAULT (UUID()),
-    financial_product_id BIGINT UNSIGNED NOT NULL
-        COMMENT '논리 참조: financial_products.financial_product_id',
-    period_code VARCHAR(20) NOT NULL COMMENT '기간 구분 (1M/3M/6M/1Y/3Y 등)',
-    base_date_ymd VARCHAR(8) NOT NULL COMMENT '계산 기준일자 yyyyMMdd',
-    cumulative_return DECIMAL(9, 4) NULL COMMENT '누적수익률(%)',
-    annualized_return DECIMAL(9, 4) NULL COMMENT '연환산수익률(%)',
-    max_drawdown DECIMAL(9, 4) NULL COMMENT '최대낙폭 MDD(%)',
-    calculated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        COMMENT '요약 계산 시각',
-    del_yn CHAR(1) NOT NULL DEFAULT 'N',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (return_summary_id),
-    UNIQUE KEY uq_return_summaries_row_uuid (row_uuid),
-    UNIQUE KEY uq_return_summaries_product_period (financial_product_id, period_code),
-    INDEX idx_return_summaries_product (financial_product_id)
-) ENGINE = InnoDB
-  DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '배치로 미리 계산한 기간별 수익률 요약(연환산·MDD)';
+  COMMENT = '주별 종가 이력(append-only, 3년수익률·분석·알고리즘용)';
 
 -- Physical integrity constraints for single-table logical references.
 -- Deletes are explicit because this schema uses logical deletion and audit history.
@@ -850,17 +826,22 @@ ALTER TABLE favorite_properties
         FOREIGN KEY (evaluated_survey_id) REFERENCES housing_surveys (survey_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT;
 
-ALTER TABLE financial_investment_profiles
-    ADD CONSTRAINT fk_financial_investment_profiles_user
-        FOREIGN KEY (user_id) REFERENCES users (user_id)
+-- 금융상품: favorites → stock/account, price_histories → stock (내부 물리 FK).
+-- survey_id는 설문 테이블(다른 팀 담당) 확정 후 물리 FK 추가 예정(현재 논리 참조).
+ALTER TABLE financial_product_favorites
+    ADD CONSTRAINT fk_fin_favorites_stock
+        FOREIGN KEY (financial_product_stock_id)
+        REFERENCES financial_product_stock (financial_product_stock_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT,
-    ADD CONSTRAINT fk_financial_investment_profiles_favorite
-        FOREIGN KEY (selected_favorite_id) REFERENCES favorite_properties (favorite_id)
+    ADD CONSTRAINT fk_fin_favorites_account
+        FOREIGN KEY (financial_product_account_id)
+        REFERENCES financial_product_account (financial_product_account_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT;
 
-ALTER TABLE favorite_financial_products
-    ADD CONSTRAINT fk_favorite_financial_products_user
-        FOREIGN KEY (user_id) REFERENCES users (user_id)
+ALTER TABLE financial_product_price_histories
+    ADD CONSTRAINT fk_fin_price_histories_stock
+        FOREIGN KEY (financial_product_stock_id)
+        REFERENCES financial_product_stock (financial_product_stock_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 ALTER TABLE generated_reports
