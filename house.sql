@@ -14,7 +14,6 @@
 --   The database stores calculation inputs and immutable output snapshots only.
 -- Static content:
 --   Notices, FAQ, policies, and customer-center phone information are not DB tables.
-
 SET NAMES utf8mb4;
 
 DROP TABLE IF EXISTS common_codes;
