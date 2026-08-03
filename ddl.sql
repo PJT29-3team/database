@@ -6,12 +6,9 @@
 --        and generated PDF report history.
 --
 -- Fresh-install DDL:
---   This file drops and recreates the base 17 approved tables plus 4 financial
---   product cache tables (21 total). The 4 cache tables are NOT user data:
---   they are batch-synced from finlife / data.go.kr APIs and are safe to
---   truncate and rebuild at any time.
+--   This file drops and recreates 20 application tables.
 -- Security:
---   Raw refresh/action tokens must never be stored. Only SHA-256 hashes are stored.
+--   Raw authentication tokens must never be stored. Only SHA-256 hashes are stored.
 -- Calculation policy:
 --   Remaining funds and estimated selling costs are calculated by the backend.
 --   The database stores calculation inputs and immutable output snapshots only.
@@ -37,6 +34,10 @@ DROP TABLE IF EXISTS user_home_histories;
 DROP TABLE IF EXISTS user_homes;
 DROP TABLE IF EXISTS housing_preference_profiles;
 DROP TABLE IF EXISTS account_deletion_requests;
+DROP TABLE IF EXISTS social_account;
+DROP TABLE IF EXISTS password_reset_tokens;
+DROP TABLE IF EXISTS email_verifications;
+DROP TABLE IF EXISTS auth_sessions;
 DROP TABLE IF EXISTS social_accounts;
 DROP TABLE IF EXISTS account_action_tokens;
 DROP TABLE IF EXISTS refresh_tokens;
@@ -117,38 +118,13 @@ CREATE TABLE users (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '회원 기본정보와 계정 상태';
 
--- 2. Security-only password history. Keep the latest five rows per user.
--- This is not an analytics history: purge all rows when account deletion completes.
-CREATE TABLE password_histories (
-    password_history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
-        NOT NULL DEFAULT (UUID()),
-    user_id BIGINT UNSIGNED NOT NULL COMMENT '논리 참조: users.user_id',
-    password_hash VARCHAR(255) NOT NULL COMMENT 'BCrypt 비밀번호 해시',
-    change_source_code VARCHAR(30) NOT NULL
-        COMMENT 'PASSWORD_CHANGE_SOURCE 코드',
-    changed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    del_yn CHAR(1) NOT NULL DEFAULT 'N',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (password_history_id),
-    UNIQUE KEY uq_password_histories_row_uuid (row_uuid),
-    INDEX idx_password_histories_user_recent (user_id, changed_at DESC)
-) ENGINE = InnoDB
-  DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '현재 비밀번호를 포함한 최근 5개 해시의 재사용 방지 이력';
-
--- 3. JWT refresh token sessions. token_hash is SHA-256 hexadecimal text.
-CREATE TABLE refresh_tokens (
-    refresh_token_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+-- 2. JWT authentication sessions. refresh_token_hash is SHA-256 hexadecimal text.
+CREATE TABLE auth_sessions (
+    auth_session_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
     user_id BIGINT UNSIGNED NOT NULL,
-    token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    refresh_token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     device_name VARCHAR(255) NULL COMMENT 'Session/device label shown to the user',
     expires_at DATETIME(6) NOT NULL,
     revoked_at DATETIME(6) NULL COMMENT 'Rotation or logout revocation timestamp',
@@ -158,27 +134,27 @@ CREATE TABLE refresh_tokens (
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
         ON UPDATE CURRENT_TIMESTAMP(6),
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (refresh_token_id),
-    UNIQUE KEY uq_refresh_tokens_row_uuid (row_uuid),
-    UNIQUE KEY uq_refresh_tokens_hash (token_hash),
-    INDEX idx_refresh_tokens_user_active (user_id, revoked_at, expires_at),
-    INDEX idx_refresh_tokens_cleanup (expires_at, revoked_at)
+    PRIMARY KEY (auth_session_id),
+    UNIQUE KEY uq_auth_sessions_row_uuid (row_uuid),
+    UNIQUE KEY uq_auth_sessions_refresh_token_hash (refresh_token_hash),
+    INDEX idx_auth_sessions_user_active (user_id, revoked_at, expires_at),
+    INDEX idx_auth_sessions_cleanup (expires_at, revoked_at)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = 'JWT Refresh Token 해시와 회전·로그아웃 상태';
+  COMMENT = 'JWT 인증 세션과 Refresh Token 해시';
 
--- 4. One-time email verification/change/password reset tokens.
-CREATE TABLE account_action_tokens (
-    action_token_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+-- 3. One-time signup and email-change verification tokens.
+CREATE TABLE email_verifications (
+    email_verification_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
     user_id BIGINT UNSIGNED NOT NULL,
-    purpose VARCHAR(32) NOT NULL,
-    target_email VARCHAR(320) NULL COMMENT 'Signup/email-change destination',
+    verification_email VARCHAR(320) NOT NULL,
+    verification_type VARCHAR(20) NOT NULL,
     token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     expires_at DATETIME(6) NOT NULL,
-    consumed_at DATETIME(6) NULL,
+    used_at DATETIME(6) NULL,
     revoked_at DATETIME(6) NULL,
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -186,24 +162,50 @@ CREATE TABLE account_action_tokens (
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
         ON UPDATE CURRENT_TIMESTAMP(6),
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (action_token_id),
-    UNIQUE KEY uq_account_action_tokens_row_uuid (row_uuid),
-    UNIQUE KEY uq_action_tokens_hash (token_hash),
-    INDEX idx_action_tokens_active (
+    PRIMARY KEY (email_verification_id),
+    UNIQUE KEY uq_email_verifications_row_uuid (row_uuid),
+    UNIQUE KEY uq_email_verifications_token_hash (token_hash),
+    INDEX idx_email_verifications_active (
         user_id,
-        purpose,
-        consumed_at,
+        verification_type,
+        used_at,
         revoked_at,
         expires_at
     ),
-    INDEX idx_action_tokens_cleanup (expires_at, consumed_at, revoked_at)
+    INDEX idx_email_verifications_cleanup (expires_at, used_at, revoked_at)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '회원가입 이메일 인증·이메일 변경·비밀번호 재설정 일회용 토큰';
+  COMMENT = '회원가입·이메일 변경 인증 토큰';
+
+-- 4. One-time password reset tokens.
+CREATE TABLE password_reset_tokens (
+    password_reset_token_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    user_id BIGINT UNSIGNED NOT NULL,
+    token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    used_at DATETIME(6) NULL,
+    revoked_at DATETIME(6) NULL,
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (password_reset_token_id),
+    UNIQUE KEY uq_password_reset_tokens_row_uuid (row_uuid),
+    UNIQUE KEY uq_password_reset_tokens_token_hash (token_hash),
+    INDEX idx_password_reset_tokens_active (user_id, used_at, revoked_at, expires_at),
+    INDEX idx_password_reset_tokens_cleanup (expires_at, used_at, revoked_at)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '비밀번호 재설정 일회성 토큰';
 
 -- 5. Social provider identity linked to one user.
-CREATE TABLE social_accounts (
+CREATE TABLE social_account (
     social_account_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
@@ -219,52 +221,13 @@ CREATE TABLE social_accounts (
         ON UPDATE CURRENT_TIMESTAMP(6),
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
     PRIMARY KEY (social_account_id),
-    UNIQUE KEY uq_social_accounts_row_uuid (row_uuid),
-    UNIQUE KEY uq_social_provider_user (provider, provider_user_id),
-    UNIQUE KEY uq_social_user_provider (user_id, provider)
+    UNIQUE KEY uq_social_account_row_uuid (row_uuid),
+    UNIQUE KEY uq_social_account_provider_user (provider, provider_user_id),
+    UNIQUE KEY uq_social_account_user_provider (user_id, provider)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '카카오·네이버 소셜 계정 연결정보';
-
--- 6. Withdrawal request with 30-day grace period and cancellation state.
-CREATE TABLE account_deletion_requests (
-    deletion_request_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
-        NOT NULL DEFAULT (UUID()),
-    user_id BIGINT UNSIGNED NOT NULL,
-    reason_code VARCHAR(40) NOT NULL,
-    reason_detail VARCHAR(500) NULL COMMENT 'Required only when reason_code is OTHER',
-    data_deletion_consent_at DATETIME(6) NOT NULL,
-    requested_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    scheduled_delete_at DATETIME(6) NOT NULL,
-    cancelled_at DATETIME(6) NULL,
-    completed_at DATETIME(6) NULL,
-    active_user_id BIGINT UNSIGNED GENERATED ALWAYS AS (
-        CASE
-            WHEN cancelled_at IS NULL AND completed_at IS NULL THEN user_id
-            ELSE NULL
-        END
-    ) STORED,
-    del_yn CHAR(1) NOT NULL DEFAULT 'N',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (deletion_request_id),
-    UNIQUE KEY uq_account_deletion_requests_row_uuid (row_uuid),
-    UNIQUE KEY uq_active_deletion_request (active_user_id),
-    INDEX idx_account_deletion_due (
-        scheduled_delete_at,
-        cancelled_at,
-        completed_at
-    ),
-    INDEX idx_account_deletion_user_requested (user_id, requested_at DESC)
-) ENGINE = InnoDB
-  DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = '30일 유예 회원탈퇴 신청·취소·완료 기록';
 
 -- 7. Static survey cards and top-level safety/convenience/asset weights.
 CREATE TABLE housing_preference_profiles (
@@ -762,28 +725,23 @@ CREATE TABLE financial_product_price_histories (
 
 -- Physical integrity constraints for single-table logical references.
 -- Deletes are explicit because this schema uses logical deletion and audit history.
-ALTER TABLE password_histories
-    ADD CONSTRAINT fk_password_histories_user
+ALTER TABLE auth_sessions
+    ADD CONSTRAINT fk_auth_sessions_user
         FOREIGN KEY (user_id) REFERENCES users (user_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT;
 
-ALTER TABLE refresh_tokens
-    ADD CONSTRAINT fk_refresh_tokens_user
+ALTER TABLE email_verifications
+    ADD CONSTRAINT fk_email_verifications_user
         FOREIGN KEY (user_id) REFERENCES users (user_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT;
 
-ALTER TABLE account_action_tokens
-    ADD CONSTRAINT fk_account_action_tokens_user
+ALTER TABLE password_reset_tokens
+    ADD CONSTRAINT fk_password_reset_tokens_user
         FOREIGN KEY (user_id) REFERENCES users (user_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT;
 
-ALTER TABLE social_accounts
-    ADD CONSTRAINT fk_social_accounts_user
-        FOREIGN KEY (user_id) REFERENCES users (user_id)
-        ON DELETE RESTRICT ON UPDATE RESTRICT;
-
-ALTER TABLE account_deletion_requests
-    ADD CONSTRAINT fk_account_deletion_requests_user
+ALTER TABLE social_account
+    ADD CONSTRAINT fk_social_account_user
         FOREIGN KEY (user_id) REFERENCES users (user_id)
         ON DELETE RESTRICT ON UPDATE RESTRICT;
 
@@ -861,22 +819,14 @@ INSERT INTO common_codes (
     ('USER_STATUS', 'PENDING_VERIFICATION', '이메일 인증 대기', '회원가입 후 최초 이메일 인증 전 상태', 10, TRUE),
     ('USER_STATUS', 'PENDING_PROFILE', '추가정보 입력 대기', '소셜 로그인 후 필수 프로필 입력 전 상태', 20, TRUE),
     ('USER_STATUS', 'ACTIVE', '정상', '정상적으로 서비스를 이용할 수 있는 계정', 30, TRUE),
-    ('USER_STATUS', 'PENDING_DELETE', '탈퇴 유예', '탈퇴 신청 후 30일 유예 중인 계정', 40, TRUE),
     ('USER_STATUS', 'DELETED', '탈퇴 완료', '개인정보 익명화가 완료된 계정', 50, TRUE),
     ('USER_STATUS', 'SUSPENDED', '이용 정지', '운영 정책에 따라 이용이 정지된 계정', 60, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'SIGNUP', '회원가입 인증', '회원가입 이메일 인증 토큰', 10, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'SIGNUP_COMPLETION', '회원가입 완료', '이메일 인증 후 회원가입 완료용 일회성 토큰', 15, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'EMAIL_CHANGE', '이메일 변경', '이메일 주소 변경 인증 토큰', 20, TRUE),
     ('ACTION_TOKEN_PURPOSE', 'PASSWORD_RESET', '비밀번호 재설정', '비밀번호 재설정 토큰', 30, TRUE),
-    ('PASSWORD_CHANGE_SOURCE', 'SIGNUP', '회원가입', '회원가입 시 최초 비밀번호 등록', 10, TRUE),
-    ('PASSWORD_CHANGE_SOURCE', 'PASSWORD_RESET', '비밀번호 찾기', '이메일 링크를 통한 비밀번호 재설정', 20, TRUE),
-    ('PASSWORD_CHANGE_SOURCE', 'MYPAGE', '마이페이지', '로그인 후 마이페이지에서 비밀번호 변경', 30, TRUE),
     ('SOCIAL_PROVIDER', 'KAKAO', '카카오', '카카오 소셜 로그인', 10, TRUE),
     ('SOCIAL_PROVIDER', 'NAVER', '네이버', '네이버 소셜 로그인', 20, TRUE),
-    ('DELETION_REASON', 'NO_LONGER_NEEDED', '더 이상 서비스를 이용하지 않음', '회원탈퇴 선택 사유', 10, TRUE),
-    ('DELETION_REASON', 'PRIVACY_CONCERN', '개인정보 보호 우려', '회원탈퇴 선택 사유', 20, TRUE),
-    ('DELETION_REASON', 'DIFFICULT_TO_USE', '서비스 사용이 어려움', '회원탈퇴 선택 사유', 30, TRUE),
-    ('DELETION_REASON', 'OTHER', '기타', '상세 사유를 함께 입력하는 회원탈퇴 사유', 40, TRUE),
     ('HOME_ANALYSIS_STATUS', 'PENDING', '분석 대기', '외부 시세 조회 및 분석 대기', 10, TRUE),
     ('HOME_ANALYSIS_STATUS', 'COMPLETED', '분석 완료', '현재집 분석이 정상 완료됨', 20, TRUE),
     ('HOME_ANALYSIS_STATUS', 'FAILED', '분석 실패', '외부 조회 또는 계산 실패', 30, TRUE),
@@ -1033,33 +983,19 @@ ON DUPLICATE KEY UPDATE
     is_active = VALUES(is_active);
 
 -- Safe periodic token cleanup. Run from a scheduled backend job.
-DELETE FROM refresh_tokens
+DELETE FROM auth_sessions
 WHERE expires_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY)
    OR revoked_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY);
 
-DELETE FROM account_action_tokens
+DELETE FROM email_verifications
 WHERE expires_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY)
-   OR consumed_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY)
+   OR used_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY)
    OR revoked_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY);
 
--- 비밀번호 변경 성공 직후 실행하는 최근 5개 보존 정리 예시.
--- 실제 서비스에서는 WHERE user_id = ? 범위로 실행하는 것을 권장한다.
-DELETE ph
-FROM password_histories ph
-JOIN (
-    SELECT password_history_id
-    FROM (
-        SELECT
-            password_history_id,
-            ROW_NUMBER() OVER (
-                PARTITION BY user_id
-                ORDER BY changed_at DESC, password_history_id DESC
-            ) AS history_rank
-        FROM password_histories
-    ) ranked
-    WHERE history_rank > 5
-) obsolete
-    ON obsolete.password_history_id = ph.password_history_id;
+DELETE FROM password_reset_tokens
+WHERE expires_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY)
+   OR used_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY)
+   OR revoked_at < DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 DAY);
 
 -- Report cleanup is a two-resource operation and must be completed by the backend:
 --   1. Lock/select expired rows and mark them DELETING.
