@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS apartment_complexes (
     UNIQUE KEY uq_apartment_complexes_row_uuid (row_uuid),
     UNIQUE KEY uq_apartment_complexes_external (external_complex_key),
     INDEX idx_apartment_complexes_geo (latitude, longitude),
-    INDEX idx_apartment_complexes_region (sigungu_name, eupmyeondong_name)
+    INDEX idx_apartment_complexes_region (sigungu_name, eupmyeondong_name),
+    INDEX idx_apartment_complexes_region_price (sido_name, sigungu_name, representative_price)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
