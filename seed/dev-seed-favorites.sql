@@ -11,7 +11,7 @@ SELECT 1, financial_product_account_id, 'Y', 'DEV-SEED'
  WHERE product_type = 'NH-OLLWON-DEP-06'
  LIMIT 1;
 
--- 중기 만기매칭 ETF: KODEX 27-12 은행채 (duration_months=16)
+-- 중기 만기매칭 ETF: KODEX 27-12 은행채 (만기 2027-12-15)
 INSERT INTO financial_product_favorites
     (survey_id, financial_product_stock_id, is_selected, created_by)
 SELECT 1, financial_product_stock_id, 'Y', 'DEV-SEED'
@@ -19,7 +19,7 @@ SELECT 1, financial_product_stock_id, 'Y', 'DEV-SEED'
  WHERE product_type = 'KODEX-2712-BANK'
  LIMIT 1;
 
--- 장기 목표만기 펀드: 미래에셋 목표만기2030 채권형 (duration_months=49)
+-- 장기 목표만기 펀드: 미래에셋 목표만기2030 채권형 (만기 2030-09-30)
 INSERT INTO financial_product_favorites
     (survey_id, financial_product_stock_id, is_selected, created_by)
 SELECT 1, financial_product_stock_id, 'Y', 'DEV-SEED'
