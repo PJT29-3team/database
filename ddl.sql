@@ -513,7 +513,9 @@ CREATE TABLE financial_product_preference (
     financial_product_preference_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
-    invest_ratio DECIMAL(5, 2) NOT NULL COMMENT '투자 비율(%) 2~30',
+    invest_amount BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '투자 금액(원) = 여유자금 - 즉시지출',
+    immediate_expense BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '당장 쓸 돈(원)',
+    monthly_need BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '매달 쓸 돈(원)',
     safety_level VARCHAR(30) NOT NULL
         COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드 (VERY_LOW=6/LOW=5/MEDIUM=4등급)',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
@@ -637,10 +639,6 @@ CREATE TABLE financial_product_stock (
     stock_name VARCHAR(255) NOT NULL COMMENT '상품명',
     institution_name VARCHAR(255) NOT NULL COMMENT '운용사',
     safety_level VARCHAR(30) NOT NULL COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
-    duration_months SMALLINT UNSIGNED NOT NULL
-        COMMENT '권장 투자기간(개월) — 이 값으로 단/중/장 구분',
-    invest_period VARCHAR(20) NOT NULL
-        COMMENT 'INVESTMENT_PERIOD 코드. duration_months 기준: <12=SHORT, 12~35=MEDIUM, >=36=LONG',
     maturity_date DATE NULL
         COMMENT '만기일(존속기한). 값이 있으면 만기 상품 → 추천은 maturity_date IS NOT NULL만',
     underlying_index VARCHAR(100) NULL COMMENT '기초지수',
@@ -662,7 +660,7 @@ CREATE TABLE financial_product_stock (
     PRIMARY KEY (financial_product_stock_id),
     UNIQUE KEY uq_financial_product_stock_row_uuid (row_uuid),
     UNIQUE KEY uq_financial_product_stock_type (product_type),
-    INDEX idx_financial_product_stock_filter (invest_period, safety_level)
+    INDEX idx_financial_product_stock_filter (maturity_date, safety_level)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
