@@ -325,6 +325,22 @@ CREATE TABLE housing_surveys (
     reserve_amount_used BIGINT UNSIGNED NULL,
     max_purchase_budget_amount BIGINT UNSIGNED NULL
         COMMENT 'Backend-calculated maximum purchase budget',
+    acquisition_price_amount BIGINT UNSIGNED NULL
+        COMMENT '설문 입력 과거 취득가액',
+    transfer_price_amount BIGINT UNSIGNED NULL
+        COMMENT '설문 입력 예상 양도가액',
+    holding_years SMALLINT UNSIGNED NULL
+        COMMENT '보유기간(년)',
+    residence_years SMALLINT UNSIGNED NULL
+        COMMENT '거주기간(년)',
+    regulated_area BOOLEAN NULL
+        COMMENT '조정대상지역 주택 여부',
+    capital_gains_tax_amount BIGINT UNSIGNED NULL
+        COMMENT 'Backend-calculated 추정 양도소득세',
+    brokerage_fee_amount BIGINT UNSIGNED NULL
+        COMMENT 'Backend-calculated 중개수수료(부가세 포함)',
+    net_proceeds_amount BIGINT UNSIGNED NULL
+        COMMENT 'Backend-calculated 매도 실수령액',
     started_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     completed_at DATETIME(6) NULL,
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
@@ -873,6 +889,7 @@ INSERT INTO common_codes (
     ('SOCIAL_PROVIDER', 'NAVER', '네이버', '네이버 소셜 로그인', 20, TRUE),
     ('SURVEY_STATUS', 'IN_PROGRESS', '진행 중', '설문 응답을 입력 중인 상태', 10, TRUE),
     ('SURVEY_STATUS', 'COMPLETED', '완료', '설문과 예산 계산이 완료된 상태', 20, TRUE),
+    ('SURVEY_STATUS', 'ABANDONED', '중단', '사용자가 처음부터 다시 시작해 폐기된 설문', 30, TRUE),
     ('SURVEY_STEP', 'INTRO', '설문 시작', '설문 안내 및 시작 전 단계', 0, TRUE),
     ('SURVEY_STEP', 'PREFERENCE_PROFILE', '주거 선호 선택', '안전·생활·자산 선호 유형 선택 단계', 20, TRUE),
     ('SURVEY_STEP', 'MORTGAGE', '담보대출 확인', '보유 담보대출 여부와 잔액 입력 단계', 30, TRUE),
