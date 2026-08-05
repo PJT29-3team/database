@@ -520,6 +520,60 @@ CREATE TABLE house_favorites_history (
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '관심 매물 선택 변경 이력';
+CREATE TABLE house_persona_score (
+    house_persona_score_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    house_id INT UNSIGNED NOT NULL,
+    profile_code VARCHAR(40) NOT NULL,
+
+    safety_score TINYINT UNSIGNED NOT NULL,
+    convenience_score TINYINT UNSIGNED NOT NULL,
+    asset_score TINYINT UNSIGNED NOT NULL,
+    total_score TINYINT UNSIGNED NOT NULL,
+
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+
+    PRIMARY KEY (house_persona_score_id),
+
+    UNIQUE KEY uq_house_persona_score_house_profile (
+        house_id,
+        profile_code
+    ),
+
+    KEY idx_house_persona_score_profile_total (
+        profile_code,
+        total_score DESC,
+        house_id
+    ),
+
+    CONSTRAINT fk_house_persona_score_house
+        FOREIGN KEY (house_id)
+        REFERENCES house (house_id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+
+    CONSTRAINT fk_house_persona_score_profile
+        FOREIGN KEY (profile_code)
+        REFERENCES housing_preference_profiles (profile_code)
+        ON DELETE RESTRICT
+        ON UPDATE RESTRICT,
+
+    CONSTRAINT chk_house_persona_score_safety
+        CHECK (safety_score <= 100),
+
+    CONSTRAINT chk_house_persona_score_convenience
+        CHECK (convenience_score <= 100),
+
+    CONSTRAINT chk_house_persona_score_asset
+        CHECK (asset_score <= 100),
+
+    CONSTRAINT chk_house_persona_score_total
+        CHECK (total_score <= 100)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_0900_ai_ci
+  COMMENT='매물·주거선호 프로필별 평가점수';
 
 -- 14. One current financial recommendation condition set per user.
 CREATE TABLE financial_product_preference (
@@ -926,7 +980,7 @@ INSERT INTO housing_preference_profiles (
         '안전한 생활환경을 가장 중요하게 생각해요',
         '침수·산사태 위험과 피난 동선, 소방 접근성을 우선해서 살펴보는 성향입니다.',
         '안전 조건을 우선으로 하되 기본 생활 편의도 함께 확인해드려요.',
-        60.00, 25.00, 15.00, 1, TRUE
+        60.00, 20.00, 20.00, 1, TRUE
     ),
     (
         'VALUE_STABILITY',
@@ -934,7 +988,7 @@ INSERT INTO housing_preference_profiles (
         '가격과 나중에 되팔기 쉬운지를 함께 봐요',
         '합리적인 가격과 거래량, 가격 변동성을 고르게 확인하는 성향입니다.',
         '가격 부담과 환금성을 균형 있게 반영해드려요.',
-        40.00, 20.00, 40.00, 2, TRUE
+        50.00, 10.00, 40.00, 2, TRUE
     ),
     (
         'BALANCED',
@@ -950,7 +1004,7 @@ INSERT INTO housing_preference_profiles (
         '병원과 마트, 교통이 가까운지를 중요하게 봐요',
         '의료·교통·생활시설의 접근성을 우선해서 살펴보는 성향입니다.',
         '일상 이동이 편한 주거지를 찾는 데 초점을 맞춰드려요.',
-        40.00, 40.00, 20.00, 4, TRUE
+        50.00, 40.00, 10.00, 4, TRUE
     )
 ON DUPLICATE KEY UPDATE
     title = VALUES(title),
