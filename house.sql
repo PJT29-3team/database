@@ -15,7 +15,7 @@
 -- Static content:
 --   Notices, FAQ, policies, and customer-center phone information are not DB tables.
 SET NAMES utf8mb4;
-
+SET sql_safe_updates = 0;
 DROP TABLE IF EXISTS common_codes;
 DROP TABLE IF EXISTS financial_product_favorites;
 DROP TABLE IF EXISTS financial_product_history;
@@ -28,6 +28,8 @@ DROP TABLE IF EXISTS house_favorites_history;
 DROP TABLE IF EXISTS house_favorites;
 DROP TABLE IF EXISTS score_details;
 DROP TABLE IF EXISTS house_score;
+DROP TABLE IF EXISTS house_persona_score;
+DROP TABLE IF EXISTS house;
 DROP TABLE IF EXISTS house;
 DROP TABLE IF EXISTS survey_desired_regions;
 DROP TABLE IF EXISTS housing_surveys;
