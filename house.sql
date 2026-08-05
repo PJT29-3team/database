@@ -22,7 +22,7 @@ DROP TABLE IF EXISTS financial_product_history;
 DROP TABLE IF EXISTS financial_product_price_histories;
 DROP TABLE IF EXISTS financial_product_stock;
 DROP TABLE IF EXISTS financial_product_account;
-DROP TABLE IF EXISTS financial_product_preference;
+
 DROP TABLE IF EXISTS generated_reports;
 DROP TABLE IF EXISTS house_favorites_history;
 DROP TABLE IF EXISTS house_favorites;
@@ -593,26 +593,7 @@ CREATE TABLE house_persona_score (
   COLLATE=utf8mb4_0900_ai_ci
   COMMENT='매물·주거선호 프로필별 평가점수';
 
--- 14. One current financial recommendation condition set per user.
-CREATE TABLE financial_product_preference (
-    financial_product_preference_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
-        NOT NULL DEFAULT (UUID()),
-    invest_ratio DECIMAL(5, 2) NOT NULL COMMENT '투자 비율(%) 2~30',
-    safety_level VARCHAR(30) NOT NULL
-        COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드 (VERY_LOW=6/LOW=5/MEDIUM=4등급)',
-    del_yn CHAR(1) NOT NULL DEFAULT 'N',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
-    PRIMARY KEY (financial_product_preference_id),
-    UNIQUE KEY uq_financial_product_preference_row_uuid (row_uuid)
-) ENGINE = InnoDB
-  DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_0900_ai_ci
-  COMMENT = 'FPR-001 금융상품 추천 조건 (survey가 참조)';
+
 
 -- 15. 관심 등록 금융상품 + 투자금액 배분 (금액 배분 기능).
 CREATE TABLE financial_product_favorites (
