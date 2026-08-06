@@ -721,6 +721,32 @@ CREATE TABLE financial_product_price_histories (
   COLLATE = utf8mb4_0900_ai_ci
   COMMENT = '주별 종가 이력(append-only, 3년수익률·분석·알고리즘용)';
 
+-- 20. 금융상품 사용자 상호작용 로그(암묵적 피드백/관여도 분석용).
+CREATE TABLE financial_product_interaction_log (
+    interaction_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
+        NOT NULL DEFAULT (UUID()),
+    user_id BIGINT UNSIGNED NULL COMMENT 'users(user_id) 참조 (비회원/임시 시 NULL)',
+    product_type VARCHAR(40) NOT NULL COMMENT '금융상품 고유코드(product_type)',
+    product_kind VARCHAR(20) NOT NULL COMMENT '상품구분 (stock/account)',
+    action_type VARCHAR(20) NOT NULL COMMENT '행동 유형 (LIKE/UNLIKE/VIEW)',
+    location VARCHAR(30) NOT NULL COMMENT '행동 발생 위치 (REC_LIST/DETAIL_TOP/DETAIL_BOTTOM)',
+    dwell_time_sec INT UNSIGNED NULL DEFAULT 0 COMMENT '상세페이지 체류시간(초)',
+    del_yn CHAR(1) NOT NULL DEFAULT 'N',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
+    PRIMARY KEY (interaction_log_id),
+    UNIQUE KEY uq_interaction_log_uuid (row_uuid),
+    INDEX idx_interaction_log_user (user_id, product_type),
+    INDEX idx_interaction_log_action (action_type, location)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci
+  COMMENT = '금융상품 사용자 상호작용 로그(암묵적 피드백/관여도 분석용)';
+
 -- Physical integrity constraints for single-table logical references.
 -- Deletes are explicit because this schema uses logical deletion and audit history.
 ALTER TABLE auth_sessions
