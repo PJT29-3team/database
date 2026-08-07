@@ -598,7 +598,9 @@ CREATE TABLE financial_product_preference (
     financial_product_preference_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
-    invest_ratio DECIMAL(5, 2) NOT NULL COMMENT '투자 비율(%) 2~30',
+    invest_amount BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '투자 금액(원) = 여유자금 - 즉시지출',
+    immediate_expense BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '당장 쓸 돈(원)',
+    monthly_need BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '매달 쓸 돈(원)',
     safety_level VARCHAR(30) NOT NULL
         COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드 (VERY_LOW=6/LOW=5/MEDIUM=4등급)',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
