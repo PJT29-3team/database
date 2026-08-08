@@ -598,7 +598,11 @@ CREATE TABLE financial_product_preference (
     financial_product_preference_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     row_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
         NOT NULL DEFAULT (UUID()),
-    invest_ratio DECIMAL(5, 2) NOT NULL COMMENT '투자 비율(%) 2~30',
+    user_id BIGINT UNSIGNED NOT NULL
+        COMMENT 'users(user_id). 마지막 입력 조건을 복원하기 위해 필요하다',
+    invest_amount BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '투자 금액(원) = 여유자금 - 즉시지출',
+    immediate_expense BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '당장 쓸 돈(원)',
+    monthly_need BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '매달 쓸 돈(원)',
     safety_level VARCHAR(30) NOT NULL
         COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드 (VERY_LOW=6/LOW=5/MEDIUM=4등급)',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
@@ -608,7 +612,9 @@ CREATE TABLE financial_product_preference (
         ON UPDATE CURRENT_TIMESTAMP(6),
     updated_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
     PRIMARY KEY (financial_product_preference_id),
-    UNIQUE KEY uq_financial_product_preference_row_uuid (row_uuid)
+    UNIQUE KEY uq_financial_product_preference_row_uuid (row_uuid),
+    /* 사용자의 마지막 조건을 최신순으로 1건 뽑는 조회에 쓴다 */
+    INDEX idx_financial_product_preference_user (user_id, financial_product_preference_id)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci
@@ -846,6 +852,11 @@ ALTER TABLE survey_desired_regions
 
 -- 금융상품: favorites → stock/account, price_histories → stock (내부 물리 FK).
 -- survey_id는 설문 테이블(다른 팀 담당) 확정 후 물리 FK 추가 예정(현재 논리 참조).
+ALTER TABLE financial_product_preference
+    ADD CONSTRAINT fk_financial_product_preference_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT;
+
 ALTER TABLE financial_product_favorites
     ADD CONSTRAINT fk_fin_favorites_stock
         FOREIGN KEY (financial_product_stock_id)
