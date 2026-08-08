@@ -1,11 +1,26 @@
 SET NAMES utf8mb4;
 
--- 기존 테스트 데이터 초기화
+-- =====================================================================
+-- [금융 추천] 시니어 맞춤 금융상품 시드 데이터 패치 (총 36개)
+-- 
+-- 1. 용도:
+--    금융상품 추천 화면에서 예치기간별 4개 구간 (1~11개월, 12~23개월, 24~35개월, 36개월 이상) 및
+--    시니어 허용 안전 등급 (VERY_LOW: 매우낮은위험, LOW: 낮은위험, MEDIUM: 보통위험) 별로
+--    빈칸 없이 각 3개씩 꽉 채워 노출하기 위한 최적화 데이터 세트입니다.
+--    (정기예금 12개 + 우량 채권/ETF/목표만기펀드 24개 = 총 36개)
+--
+-- 2. 실행 및 적용 가이드:
+--    - 신규 DB 설치 시: ddl.sql (또는 house.sql) 실행 후 본 스크립트를 실행하시면 됩니다.
+--    - 기존 로컬 DB 사용 시: 본 스크립트만 실행하면 기존 금융상품 테이블만 안전하게 갱신됩니다.
+--    - 멱도성(안전성): 상단에 DELETE 구문이 포함되어 있어 몇 번을 중복 실행해도 늘 깨끗한 상태로 복구됩니다.
+-- =====================================================================
+
+-- 1. 기존 금융상품 테이블 초기화
 DELETE FROM financial_product_account;
 DELETE FROM financial_product_stock;
 
 -- =================================================================
--- 1. 예금 (financial_product_account) — VERY_LOW (매우낮은위험)
+-- 2. 예금 (financial_product_account) — VERY_LOW (매우낮은위험)
 -- =================================================================
 INSERT INTO financial_product_account (row_uuid, product_type, category_code, account_name, institution_name, safety_level, invest_period, interest_rate, max_interest_rate, subscription_period, recommend_reason, recommended_weight, del_yn, created_at, updated_at) VALUES 
 ('4845d78d-dfa7-45e7-b7c1-5eb336c29c79', 'DUMMY_ACC_25', 'DEPOSIT', 'KB 시니어 맞춤 정기예금 1호', 'KB국민은행', 'VERY_LOW', 'UNDER_12M', 3.55, 3.85, 6, '6개월 만기로 자금이 오래 묶이지 않아 단기 목적에 적합합니다.', 1.0, 'N', NOW(), NOW()),
@@ -25,7 +40,7 @@ INSERT INTO financial_product_account (row_uuid, product_type, category_code, ac
 ('1f4a1c9c-e626-43cf-9fef-a6f2d9b635ee', 'DUMMY_ACC_36', 'DEPOSIT', '신한 쏠편한 장기예금 (48개월)', '신한은행', 'VERY_LOW', 'OVER_36M', 3.70, 4.05, 48, '장기 은퇴 자금 보호 및 고정 금리 수익 확보에 유리합니다.', 1.0, 'N', NOW(), NOW());
 
 -- =================================================================
--- 2. 채권/ETF (financial_product_stock) — LOW & MEDIUM (낮은위험 & 보통위험)
+-- 3. 채권/ETF (financial_product_stock) — LOW & MEDIUM (낮은위험 & 보통위험)
 -- =================================================================
 INSERT INTO financial_product_stock (row_uuid, product_type, category_code, stock_name, institution_name, safety_level, maturity_date, return_rate, recommend_reason, del_yn, created_at, updated_at) VALUES 
 -- [1년 미만 - LOW]
