@@ -117,3 +117,17 @@ SET @sql := IF(
       COMMENT = ''설문 시점에 보여준 추천 매물 스냅샷'''
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+
+SET @sql := IF(
+    (SELECT COUNT(*) FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'survey_recommendation_items'
+        AND column_name = 'ai_summary') > 0,
+    'SELECT ''survey_recommendation_items.ai_summary 가 이미 있습니다'' AS skipped',
+    'ALTER TABLE survey_recommendation_items
+        ADD COLUMN ai_summary TEXT NULL
+            COMMENT ''매물 상세의 AI 요약(JSON). 처음 열 때 한 번 만들어 두고 다시 쓴다''
+            AFTER profile_code'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
