@@ -681,6 +681,7 @@ CREATE TABLE financial_product_account (
     account_name VARCHAR(255) NOT NULL COMMENT '상품명',
     institution_name VARCHAR(255) NOT NULL COMMENT '금융회사명',
     safety_level VARCHAR(30) NOT NULL COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
+    join_member VARCHAR(300) NULL COMMENT '가입대상/자격(finlife join_member)',
     invest_period VARCHAR(20) NOT NULL
         COMMENT 'INVESTMENT_PERIOD 코드. subscription_period 기준: <12=SHORT, 12~35=MEDIUM, >=36=LONG',
     interest_rate DECIMAL(5, 2) NULL COMMENT '기본금리(%)',
