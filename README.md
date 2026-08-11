@@ -36,3 +36,8 @@ ERROR 3730: Cannot drop table 'housing_surveys' referenced by a foreign key
 
 **겹치는 19개 테이블은 `ddl.sql`만 고치면 반영되지 않는다.** `house.sql`이 나중에 실행되어
 덮어쓰기 때문이다. 두 파일을 같이 고쳐야 한다.
+
+
+## 관심매물 히스토리/ 매물별 페르소나 점수 테이블 삭제 ( 추천 점수는 house_score와 housing_preference_profiles를 조합해 조회 시 계산 )
+1. favorite-house.sql 실행
+2. ./gradlew rescoreHouses 실행 // score_details에 저장된 매물별 원천 데이터를 읽어 점수를 다시 계산하고 house_score 테이블에 저장하는 배치
