@@ -423,6 +423,8 @@ CREATE TABLE housing_surveys (
         COMMENT 'Backend-calculated maximum purchase budget',
     started_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     completed_at DATETIME(6) NULL,
+    last_active_at DATETIME(6) NULL
+        COMMENT '마지막으로 이어연 시각. 지난 설문을 다시 열면 갱신(SurveyMapper.touchLastActive)',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
