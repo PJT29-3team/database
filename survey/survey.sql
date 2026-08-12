@@ -131,3 +131,24 @@ SET @sql := IF(
             AFTER profile_code'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- =====================================================================
+-- [설문] 마지막으로 붙잡은 시각
+--
+-- 마이페이지에서 지난 설문을 "이어하기" 로 열면 화면은 그 설문으로 바뀌는데,
+-- 서버는 "가장 최근 완료 설문" 을 현재로 삼아 금융상품 배분과 보고서 발급이
+-- 엉뚱한 설문에 기록됐다. 어느 설문을 붙잡고 있는지 서버가 기억하게 한다.
+-- =====================================================================
+SET @sql := IF(
+    (SELECT COUNT(*) FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'housing_surveys'
+        AND column_name = 'last_active_at') > 0,
+    'SELECT ''housing_surveys.last_active_at 가 이미 있습니다'' AS skipped',
+    'ALTER TABLE housing_surveys ADD COLUMN last_active_at DATETIME(6) NULL
+        COMMENT ''사용자가 마지막으로 이 설문을 붙잡은 시각'' AFTER completed_at'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 이미 있는 설문은 완료 시각을 그대로 쓴다. 없던 값을 지어내지 않는다.
+UPDATE housing_surveys SET last_active_at = completed_at
+ WHERE last_active_at IS NULL AND completed_at IS NOT NULL;
