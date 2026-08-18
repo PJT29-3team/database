@@ -685,7 +685,7 @@ CREATE TABLE financial_product_account (
     safety_level VARCHAR(30) NOT NULL COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
     join_member VARCHAR(300) NULL COMMENT '가입대상/자격(finlife join_member)',
     invest_period VARCHAR(20) NOT NULL
-        COMMENT 'INVESTMENT_PERIOD 코드. subscription_period 기준: 1~11=UNDER_12M, 12~23=Y1_TO_2, 24~35=Y2_TO_3, 36~47=OVER_36M(4년 이상은 추천 대상 아님)',
+        COMMENT 'INVESTMENT_PERIOD 코드. subscription_period 기준: 1~11=UNDER_12M, 12~23=Y1_TO_2, 24~35=Y2_TO_3, 36~47=Y3_TO_4(4년 이상은 추천 대상 아님)',
     interest_rate DECIMAL(5, 2) NULL COMMENT '기본금리(%)',
     max_interest_rate DECIMAL(5, 2) NULL COMMENT '최고우대금리(%)',
     subscription_period SMALLINT UNSIGNED NOT NULL
