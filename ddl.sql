@@ -423,6 +423,8 @@ CREATE TABLE housing_surveys (
         COMMENT 'Backend-calculated maximum purchase budget',
     started_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     completed_at DATETIME(6) NULL,
+    last_active_at DATETIME(6) NULL
+        COMMENT '마지막으로 이어연 시각. 지난 설문을 다시 열면 갱신(SurveyMapper.touchLastActive)',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     created_by VARCHAR(100) NOT NULL DEFAULT 'SYSTEM',
@@ -681,6 +683,7 @@ CREATE TABLE financial_product_account (
     account_name VARCHAR(255) NOT NULL COMMENT '상품명',
     institution_name VARCHAR(255) NOT NULL COMMENT '금융회사명',
     safety_level VARCHAR(30) NOT NULL COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드',
+    join_member VARCHAR(300) NULL COMMENT '가입대상/자격(finlife join_member)',
     invest_period VARCHAR(20) NOT NULL
         COMMENT 'INVESTMENT_PERIOD 코드. subscription_period 기준: 1~11=UNDER_12M, 12~23=Y1_TO_2, 24~35=Y2_TO_3, 36~47=OVER_36M(4년 이상은 추천 대상 아님)',
     interest_rate DECIMAL(5, 2) NULL COMMENT '기본금리(%)',
