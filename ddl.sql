@@ -520,6 +520,8 @@ CREATE TABLE financial_product_preference (
     invest_amount BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '투자 금액(원) = 여유자금 - 즉시지출',
     immediate_expense BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '당장 쓸 돈(원)',
     monthly_need BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '매달 쓸 돈(원)',
+    park_amount BIGINT UNSIGNED NULL
+        COMMENT '파킹통장·CMA 배분 금액(원). 사용자가 조정한 값. NULL이면 자동배분',
     safety_level VARCHAR(30) NOT NULL
         COMMENT 'FINANCIAL_PRODUCT_RISK_GRADE 코드 (VERY_LOW=6/LOW=5/MEDIUM=4등급)',
     del_yn CHAR(1) NOT NULL DEFAULT 'N',
